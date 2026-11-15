@@ -9,27 +9,27 @@ permissions:
 
 jobs:
   recon-gate:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - name: Install PostgreSQL
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+
+      - name: Install PostgreSQL 16
         run: |
           sudo apt-get update
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y postgresql postgresql-client
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y postgresql-16 postgresql-client-16
 
       - name: Installer tests
         run: bash tests/recon-installer.test.sh
 
       - name: PostgreSQL gate tests
         run: |
-          PG_BINDIR="$(pg_config --bindir 2>/dev/null || true)"
-          if [ -z "$PG_BINDIR" ]; then
-            PG_BINDIR="$(ls -d /usr/lib/postgresql/*/bin | sort -V | tail -1)"
-          fi
-          PSQL="$(command -v psql || true)"
-          if [ -z "$PSQL" ]; then
-            PSQL="$(ls /usr/lib/postgresql/*/bin/psql | sort -V | tail -1)"
-          fi
+          PG_BINDIR="/usr/lib/postgresql/16/bin"
+          PSQL="$PG_BINDIR/psql"
+          "$PSQL" --version
+          "$PG_BINDIR/postgres" --version
           PG_BINDIR="$PG_BINDIR" PSQL="$PSQL" bash tests/recon-gate-postgres.test.sh

@@ -90,19 +90,33 @@ psql_cmd() {
 psql_cmd -d postgres \
   -c 'CREATE DATABASE recon_pass;' \
   -c 'CREATE DATABASE recon_fail;' \
+  -c 'CREATE DATABASE recon_a1;' \
   -c 'CREATE DATABASE recon_a2;' \
+  -c 'CREATE DATABASE recon_a3;' \
+  -c 'CREATE DATABASE recon_a4;' \
   -c 'CREATE DATABASE recon_a5;' \
+  -c 'CREATE DATABASE recon_a6;' \
+  -c 'CREATE DATABASE recon_a7;' \
+  -c 'CREATE DATABASE recon_a8;' \
+  -c 'CREATE DATABASE recon_a9;' \
+  -c 'CREATE DATABASE recon_a10;' \
   -c 'CREATE DATABASE recon_a11;' \
   -c 'CREATE DATABASE recon_a12;' >"$TMP/create.log" 2>&1 \
   || { cat "$TMP/create.log"; die "could not create test databases"; }
 
-for db in recon_pass recon_fail recon_a2 recon_a5 recon_a11 recon_a12; do
+for db in recon_pass recon_fail recon_a1 recon_a2 recon_a3 recon_a4 recon_a5 recon_a6 recon_a7 recon_a8 recon_a9 recon_a10 recon_a11 recon_a12; do
   psql_cmd -d "$db" -f "$SCHEMA" -f "$SEED" >"$TMP/schema-$db.log" 2>&1 \
     || { cat "$TMP/schema-$db.log"; die "could not load schema/seed into $db"; }
 done
 
 psql_cmd -d recon_fail -c 'ALTER TABLE "Customer" DROP COLUMN "customerNo";' -c 'DROP TABLE "Quotation";' >"$TMP/break-a0.log" 2>&1 \
   || { cat "$TMP/break-a0.log"; die "could not introduce A0 failures"; }
+
+# A1: remove the only Role row; ledger/user/active-FY seed remains, so only A1
+# should fail and all document checks stay green.
+psql_cmd -d recon_a1 \
+  -c 'DELETE FROM "Role" WHERE id = '\''role-1'\'';' >"$TMP/break-a1.log" 2>&1 \
+  || { cat "$TMP/break-a1.log"; die "could not build A1 fixture"; }
 
 # A2: two no-entry ADJUSTMENT vouchers with opposing imbalances. A2 fails both;
 # A3 ignores them (no entries) and A4 still balances globally. The matching
@@ -112,12 +126,54 @@ psql_cmd -d recon_a2 \
   -c 'INSERT INTO "Sequence"("key", prefix, "nextNo") VALUES ('\''voucher:ADJUSTMENT'\'', '\''VCH-ADJ-'\'', 3);' >"$TMP/break-a2.log" 2>&1 \
   || { cat "$TMP/break-a2.log"; die "could not build A2 fixture"; }
 
+# A4: a single no-entry voucher is imbalanced. A2 necessarily fails it too, so
+# this fixture proves both A2 and the global Dr = Cr check (A4); A3 ignores it.
+psql_cmd -d recon_a4 \
+  -c 'INSERT INTO "Voucher"(id, "voucherNo", "voucherType", "totalDebit", "totalCredit", status) VALUES ('\''voucher-a4'\'', '\''VCH-ADJ-0001'\'', '\''ADJUSTMENT'\'', 100, 200, '\''POSTED'\'');' \
+  -c 'INSERT INTO "Sequence"("key", prefix, "nextNo") VALUES ('\''voucher:ADJUSTMENT'\'', '\''VCH-ADJ-'\'', 2);' >"$TMP/break-a4.log" 2>&1 \
+  || { cat "$TMP/break-a4.log"; die "could not build A4 fixture"; }
+
+# A3: a balanced ADJUSTMENT voucher has entries that do not match its header.
+psql_cmd -d recon_a3 \
+  -c 'INSERT INTO "Voucher"(id, "voucherNo", "voucherType", "totalDebit", "totalCredit", status) VALUES ('\''voucher-a3'\'', '\''VCH-ADJ-0001'\'', '\''ADJUSTMENT'\'', 100, 100, '\''POSTED'\'');' \
+  -c 'INSERT INTO "VoucherEntry"(id, "voucherId", debit, credit) VALUES ('\''ve-a3'\'', '\''voucher-a3'\'', 90, 100);' \
+  -c 'INSERT INTO "Sequence"("key", prefix, "nextNo") VALUES ('\''voucher:ADJUSTMENT'\'', '\''VCH-ADJ-'\'', 2);' >"$TMP/break-a3.log" 2>&1 \
+  || { cat "$TMP/break-a3.log"; die "could not build A3 fixture"; }
+
 # A5: amendment is 200 in the ledger but the invoice still says 1100, so the
 # original 1000 + live 200 no longer equals the invoice total.
 psql_cmd -d recon_a5 \
   -c 'UPDATE "Voucher" SET "totalDebit" = 200, "totalCredit" = 200 WHERE id = '\''voucher-amendment'\'';' \
   -c 'UPDATE "VoucherEntry" SET debit = 200, credit = 200 WHERE id = '\''ve-amendment-1'\'';' >"$TMP/break-a5.log" 2>&1 \
   || { cat "$TMP/break-a5.log"; die "could not build A5 fixture"; }
+
+# A6: the invoice loses its sales voucher link and has no replacement.
+psql_cmd -d recon_a6 \
+  -c 'UPDATE "Invoice" SET "voucherId" = NULL WHERE id = '\''invoice-1'\'';' >"$TMP/break-a6.log" 2>&1 \
+  || { cat "$TMP/break-a6.log"; die "could not build A6 fixture"; }
+
+# A7: the amendment is orphaned, and the invoice is reduced to 1000 so A5 still
+# reconciles (original 1000 + no linked adjustment = 1000).
+psql_cmd -d recon_a7 \
+  -c 'UPDATE "Voucher" SET "sourceId" = NULL WHERE id = '\''voucher-amendment'\'';' \
+  -c 'UPDATE "Invoice" SET "totalAmount" = 1000, balance = 550 WHERE id = '\''invoice-1'\'';' >"$TMP/break-a7.log" 2>&1 \
+  || { cat "$TMP/break-a7.log"; die "could not build A7 fixture"; }
+
+# A8: booking balance no longer equals max(total - paid, 0).
+psql_cmd -d recon_a8 \
+  -c 'UPDATE "Booking" SET "balanceAmount" = 700 WHERE id = '\''booking-1'\'';' >"$TMP/break-a8.log" 2>&1 \
+  || { cat "$TMP/break-a8.log"; die "could not build A8 fixture"; }
+
+# A9: invoice balance no longer equals max(total - paid, 0).
+psql_cmd -d recon_a9 \
+  -c 'UPDATE "Invoice" SET balance = 700 WHERE id = '\''invoice-1'\'';' >"$TMP/break-a9.log" 2>&1 \
+  || { cat "$TMP/break-a9.log"; die "could not build A9 fixture"; }
+
+# A10: booking paid is 500 but receipts net 450; balance is kept consistent
+# with the fake paid amount so A8 stays green.
+psql_cmd -d recon_a10 \
+  -c 'UPDATE "Booking" SET "paidAmount" = 500, "balanceAmount" = 600 WHERE id = '\''booking-1'\'';' >"$TMP/break-a10.log" 2>&1 \
+  || { cat "$TMP/break-a10.log"; die "could not build A10 fixture"; }
 
 # A11: invoice sequence nextNo is one ahead of the highest document number.
 psql_cmd -d recon_a11 \
@@ -159,6 +215,20 @@ expect_absent() {
   if grep -Fq -- "$pattern" "$file"; then bad "$label: found [$pattern]"; else ok "$label"; fi
 }
 
+# Compare the set of check codes in the final failure detail (A0:, A2:, ...),
+# not the number of rows each check happened to emit.
+expect_codes() {
+  local label=$1 expected=$2 file=$3
+  local actual want
+  actual=$(grep -Eo '^A[0-9]+:' "$file" 2>/dev/null | tr -d ':' | sort -u | paste -sd, - || true)
+  want=$(tr ' ' '\n' <<<"$expected" | sort -u | paste -sd, -)
+  if [ "$actual" = "$want" ]; then
+    ok "$label: check set {$actual}"
+  else
+    bad "$label: expected check set {$want}, got {$actual}"
+  fi
+}
+
 # --- all-green path ----------------------------------------------------------
 if run_gate recon_pass "$TMP/pass.log"; then PASS_EXIT=0; else PASS_EXIT=$?; fi
 expect_exit "pass" 0 "$PASS_EXIT"
@@ -173,31 +243,38 @@ expect_exit "A0-skip" 3 "$FAIL_EXIT"
 expect_contains "A0-skip: skip message" 'A0 failed: skipping A5-A12 (document checks depend on the mapped tables)' "$TMP/fail.log"
 expect_contains "A0-skip: Customer reported" '"Customer"."customerNo"' "$TMP/fail.log"
 expect_contains "A0-skip: Quotation reported" '"Quotation"."quoteNo"' "$TMP/fail.log"
-expect_contains "A0-skip: final failure" 'Preview reconciliation FAILED: 2 issue(s)' "$TMP/fail.log"
+expect_contains "A0-skip: final failure" 'Preview reconciliation FAILED' "$TMP/fail.log"
 expect_absent "A0-skip: A5-A12 did not run" 'A7 info' "$TMP/fail.log"
 expect_absent "A0-skip: no Boolean error" 'Boolean expected' "$TMP/fail.log"
 expect_absent "A0-skip: no raw Quotation relation error" 'relation "Quotation" does not exist' "$TMP/fail.log"
 expect_absent "A0-skip: no raw customerNo column error" 'column "customerNo" does not exist' "$TMP/fail.log"
 
-A0_LINES=$(grep -c '^A0:' "$TMP/fail.log" || true)
-if [ "$A0_LINES" = "2" ]; then ok "A0-skip: exactly two A0 details"; else bad "A0-skip: expected 2 A0 details, got $A0_LINES"; fi
+expect_codes "A0-skip" 'A0' "$TMP/fail.log"
 
 # --- targeted negative fixtures ---------------------------------------------
 run_negative() {
-  local label=$1 db=$2 pattern=$3 expected=$4
+  local label=$1 db=$2 expected_codes=$3
   local log="$TMP/$label.log"
   local code
   if run_gate "$db" "$log"; then code=0; else code=$?; fi
   expect_exit "$label" 3 "$code"
-  expect_contains "$label: final failure" "Preview reconciliation FAILED: $expected issue(s)" "$log"
-  expect_contains "$label: expected check" "$pattern" "$log"
+  expect_contains "$label: final failure" 'Preview reconciliation FAILED' "$log"
+  expect_codes "$label" "$expected_codes" "$log"
   expect_absent "$label: no Boolean error" 'Boolean expected' "$log"
 }
 
-run_negative "voucher-imbalance" recon_a2 'A2:' 2
-run_negative "invoice-amendment-mismatch" recon_a5 'A5:' 1
-run_negative "sequence-drift" recon_a11 'A11:' 1
-run_negative "duplicate-numbers" recon_a12 'A12:' 1
+run_negative "missing-seed-role" recon_a1 'A1'
+run_negative "voucher-imbalance" recon_a2 'A2'
+run_negative "voucher-entry-mismatch" recon_a3 'A3'
+run_negative "ledger-imbalance" recon_a4 'A2 A4'
+run_negative "invoice-amendment-mismatch" recon_a5 'A5'
+run_negative "invoice-missing-sales-voucher" recon_a6 'A6'
+run_negative "orphan-amendment" recon_a7 'A7'
+run_negative "booking-balance-mismatch" recon_a8 'A8'
+run_negative "invoice-balance-mismatch" recon_a9 'A9'
+run_negative "receipts-mismatch" recon_a10 'A10'
+run_negative "sequence-drift" recon_a11 'A11'
+run_negative "duplicate-numbers" recon_a12 'A12'
 
 expect_contains "sequence-drift: invoice detail" 'sequence invoice' "$TMP/sequence-drift.log"
 expect_contains "duplicate-numbers: quotation detail" 'Quotation duplicate QTN-0001' "$TMP/duplicate-numbers.log"
@@ -206,7 +283,7 @@ printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 if [ "$FAIL" -ne 0 ]; then
   printf '\n--- pass.log ---\n'; tail -40 "$TMP/pass.log" 2>/dev/null || true
   printf '\n--- fail.log ---\n'; tail -40 "$TMP/fail.log" 2>/dev/null || true
-  for log in "$TMP/voucher-imbalance.log" "$TMP/invoice-amendment-mismatch.log" "$TMP/sequence-drift.log" "$TMP/duplicate-numbers.log"; do
+  for log in "$TMP/missing-seed-role.log" "$TMP/voucher-imbalance.log" "$TMP/voucher-entry-mismatch.log" "$TMP/ledger-imbalance.log" "$TMP/invoice-amendment-mismatch.log" "$TMP/invoice-missing-sales-voucher.log" "$TMP/orphan-amendment.log" "$TMP/booking-balance-mismatch.log" "$TMP/invoice-balance-mismatch.log" "$TMP/receipts-mismatch.log" "$TMP/sequence-drift.log" "$TMP/duplicate-numbers.log"; do
     [ -f "$log" ] || continue
     printf '\n--- %s ---\n' "$(basename "$log")"; tail -30 "$log" || true
   done
