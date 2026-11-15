@@ -1,0 +1,35 @@
+name: recon-gate
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  recon-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install PostgreSQL
+        run: |
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y postgresql postgresql-client
+
+      - name: Installer tests
+        run: bash tests/recon-installer.test.sh
+
+      - name: PostgreSQL gate tests
+        run: |
+          PG_BINDIR="$(pg_config --bindir 2>/dev/null || true)"
+          if [ -z "$PG_BINDIR" ]; then
+            PG_BINDIR="$(ls -d /usr/lib/postgresql/*/bin | sort -V | tail -1)"
+          fi
+          PSQL="$(command -v psql || true)"
+          if [ -z "$PSQL" ]; then
+            PSQL="$(ls /usr/lib/postgresql/*/bin/psql | sort -V | tail -1)"
+          fi
+          PG_BINDIR="$PG_BINDIR" PSQL="$PSQL" bash tests/recon-gate-postgres.test.sh
