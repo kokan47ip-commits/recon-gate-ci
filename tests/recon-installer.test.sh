@@ -201,8 +201,8 @@ fi
 
 # --- permissions under umask -------------------------------------------------
 for spec in "664 022" "660 077" "2640 002"; do
-  set -- $spec
-  mode=$1 umask_value=$2
+  mode=${spec%% *}
+  umask_value=${spec#* }
   d=$(new_project "mode-$mode-$umask_value")
   cat >"$d/package.json" <<'JSON'
 {
