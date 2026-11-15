@@ -25,6 +25,12 @@ jobs:
       - name: Self-test action-pin guard
         run: bash .github/scripts/check-action-pins.test.sh
 
+      - name: Check privileged checkout triggers
+        run: bash .github/scripts/check-privileged-checkout.sh .github/workflows
+
+      - name: Self-test privileged checkout guard
+        run: bash .github/scripts/check-privileged-checkout.test.sh
+
       - name: Install actionlint
         env:
           ACTIONLINT_VERSION: "1.7.12"
@@ -45,6 +51,13 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '22'
+
+      - name: Assert Node 22 is active
+        run: |
+          set -euo pipefail
+          node --version
+          npm --version
+          node -e 'const major = process.versions.node.split(".")[0]; if (major !== "22") { console.error(`expected Node 22, got ${process.version}`); process.exit(1); }'
 
       - name: Install PostgreSQL 16
         run: |
