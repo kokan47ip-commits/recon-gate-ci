@@ -15,6 +15,25 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
+      - name: Validate action pins
+        shell: bash
+        run: |
+          set -euo pipefail
+          bad=0
+          while IFS=: read -r file line_no content; do
+            ref="${content#*uses:}"
+            ref="${ref%%#*}"
+            ref="$(printf '%s' "$ref" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+            case "$ref" in
+              ./*) continue ;;
+            esac
+            if [[ ! "$ref" =~ ^[^@]+@[0-9a-f]{40}$ ]]; then
+              echo "::error file=$file,line=$line_no::Action must be pinned to a full 40-character commit SHA: $ref"
+              bad=1
+            fi
+          done < <(grep -RInE '^[[:space:]]*(-[[:space:]]*)?uses:' .github/workflows --include='*.yml' --include='*.yaml' || true)
+          exit "$bad"
+
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '22'
