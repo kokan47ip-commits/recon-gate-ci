@@ -20,23 +20,27 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Validate action pins
-        shell: bash
+        run: bash .github/scripts/check-action-pins.sh .github/workflows
+
+      - name: Self-test action-pin guard
+        run: bash .github/scripts/check-action-pins.test.sh
+
+      - name: Install actionlint
+        env:
+          ACTIONLINT_VERSION: "1.7.12"
+          ACTIONLINT_SHA256: "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
         run: |
           set -euo pipefail
-          bad=0
-          while IFS=: read -r file line_no content; do
-            ref="${content#*uses:}"
-            ref="${ref%%#*}"
-            ref="$(printf '%s' "$ref" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
-            case "$ref" in
-              ./*) continue ;;
-            esac
-            if [[ ! "$ref" =~ ^[^@]+@[0-9a-f]{40}$ ]]; then
-              echo "::error file=$file,line=$line_no::Action must be pinned to a full 40-character commit SHA: $ref"
-              bad=1
-            fi
-          done < <(grep -RInE '^[[:space:]]*(-[[:space:]]*)?uses:' .github/workflows --include='*.yml' --include='*.yaml' || true)
-          exit "$bad"
+          archive="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          curl --fail --silent --show-error --location \
+            --output "/tmp/${archive}" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${archive}"
+          printf '%s  %s\n' "$ACTIONLINT_SHA256" "/tmp/${archive}" | sha256sum --check -
+          sudo tar --extract --gzip --file "/tmp/${archive}" --directory /usr/local/bin actionlint
+          actionlint -version
+
+      - name: Run actionlint
+        run: actionlint -shellcheck=
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
