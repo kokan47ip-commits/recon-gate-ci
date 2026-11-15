@@ -22,4 +22,4 @@ The PostgreSQL suite creates a temporary cluster and databases, exercises the pa
 
 ## CI
 
-The `recon-gate` workflow runs both suites on Ubuntu 24.04 with PostgreSQL 16 and Node 22. The `main` branch requires the `recon-gate` check.
+The `recon-gate` workflow runs both suites on Ubuntu 24.04 with PostgreSQL 16 and Node 22.
