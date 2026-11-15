@@ -25,7 +25,7 @@ fi
 
 mkdir -p scripts
 
-cat > scripts/recon-preview.sql <<'SQL'
+cat >scripts/recon-preview.sql <<'SQL'
 -- Read-only reconciliation gate for the Sites preview database.
 -- Usage: npm run recon:preview
 -- Exit 0 = passed. Exit 3 = at least one check failed.
@@ -34,7 +34,9 @@ cat > scripts/recon-preview.sql <<'SQL'
 \pset pager off
 SET client_min_messages TO notice;
 
-DROP TABLE IF EXISTS _recon_failures;
+-- Only remove this session's temp table; a permanent table of the same name
+-- must never be dropped by a read-only gate.
+DROP TABLE IF EXISTS pg_temp._recon_failures;
 CREATE TEMP TABLE _recon_failures (
   check_code text NOT NULL,
   detail     text NOT NULL
@@ -299,7 +301,7 @@ BEGIN
 END $$;
 SQL
 
-cat > scripts/recon-preview.mjs <<'MJS'
+cat >scripts/recon-preview.mjs <<'MJS'
 import { existsSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 

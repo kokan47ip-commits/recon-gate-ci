@@ -237,6 +237,24 @@ expect_contains "pass: A7 ran" 'A7 info: 1 live amendment voucher(s)' "$TMP/pass
 expect_absent "pass: A0 skip not taken" 'A0 failed: skipping A5-A12' "$TMP/pass.log"
 expect_absent "pass: no Boolean error" 'Boolean expected' "$TMP/pass.log"
 
+# --- read-only safety --------------------------------------------------------
+# A permanent table named _recon_failures must survive the gate. The gate may
+# only drop its own pg_temp table, never a same-named application table.
+psql_cmd -d recon_pass \
+  -c 'CREATE TABLE _recon_failures (sentinel text NOT NULL);' \
+  -c 'INSERT INTO _recon_failures(sentinel) VALUES ('\''keep-me'\'');' >"$TMP/permanent-table.log" 2>&1 \
+  || { cat "$TMP/permanent-table.log"; die "could not create permanent _recon_failures table"; }
+
+if run_gate recon_pass "$TMP/permanent-table-gate.log"; then SAFE_EXIT=0; else SAFE_EXIT=$?; fi
+expect_exit "permanent _recon_failures table" 0 "$SAFE_EXIT"
+expect_contains "permanent _recon_failures table: gate passed" 'Preview reconciliation PASSED: all checks A0-A12 green.' "$TMP/permanent-table-gate.log"
+sentinel=$(psql_cmd -d recon_pass -A -t -c 'SELECT sentinel FROM _recon_failures' 2>/dev/null | tr -d '[:space:]' || true)
+if [ "$sentinel" = "keep-me" ]; then
+  ok "permanent _recon_failures table survived with its row"
+else
+  bad "permanent _recon_failures table was dropped or changed"
+fi
+
 # --- A0-skip path ------------------------------------------------------------
 if run_gate recon_fail "$TMP/fail.log"; then FAIL_EXIT=0; else FAIL_EXIT=$?; fi
 expect_exit "A0-skip" 3 "$FAIL_EXIT"
