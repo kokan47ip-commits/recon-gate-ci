@@ -134,8 +134,22 @@ COMMON_ROOTS=(
   "$HOME/WebstormProjects"
 )
 
+# Candidates are deduplicated by device and inode, not by path: a
+# case-insensitive filesystem (macOS APFS) makes "Projects" and "projects" the
+# same directory, so the common-root scans would otherwise report one project
+# twice and refuse to pick it as ambiguous.
+candidate_keys=()
+
+candidate_key() {
+  local key
+  key=$(stat -c '%d:%i' "$1" 2>/dev/null || true)
+  [ -n "$key" ] || key=$(stat -f '%d:%i' "$1" 2>/dev/null || true)
+  [ -n "$key" ] || key=$1
+  printf '%s' "$key"
+}
+
 add_candidate() {
-  local dir existing
+  local dir key existing
   [ -n "${1:-}" ] || return 0
   [ -d "$1" ] || return 0
   [ -f "$1/package.json" ] || return 0
@@ -146,13 +160,15 @@ add_candidate() {
     */node_modules/* | */.git/*) return 0 ;;
   esac
 
-  if [ "${#candidates[@]}" -gt 0 ]; then
-    for existing in "${candidates[@]}"; do
-      [ "$existing" = "$dir" ] && return 0
+  key=$(candidate_key "$dir")
+  if [ "${#candidate_keys[@]}" -gt 0 ]; then
+    for existing in "${candidate_keys[@]}"; do
+      [ "$existing" = "$key" ] && return 0
     done
   fi
 
   candidates+=("$dir")
+  candidate_keys+=("$key")
   printf '    candidate: %s\n' "$dir"
 }
 
