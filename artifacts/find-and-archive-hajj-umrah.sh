@@ -21,6 +21,7 @@ candidates=()
 excludes=()
 listing=""
 archive=""
+prune=()
 
 usage() {
   cat <<'EOF'
@@ -34,7 +35,8 @@ Options:
   -h, --help       Show this help.
 
 The archive excludes dependencies, build output, .git, and common secret files.
-Every symlink in the project must be relative and stay inside the project.
+Every symlink must be relative and stay inside the project, and no project file
+may be a hard link.
 EOF
 }
 
@@ -341,6 +343,57 @@ canonical_path() {
   printf '%s/%s' "$resolved" "$(basename "$path")"
 }
 
+# The archive already drops these paths, so a link inside them never reaches it:
+# a stale link under build/ or .next/ must not stop the run. The patterns come
+# from the exclusion list itself so the checks and tar cannot drift apart.
+build_prune() {
+  local pattern
+  prune=()
+  for pattern in "${excludes[@]}"; do
+    [ "${#prune[@]}" -eq 0 ] || prune+=(-o)
+    prune+=(-name "${pattern#--exclude=}")
+  done
+}
+
+# Join a relative target onto a physical directory without touching the
+# filesystem. `cd -P` cannot resolve a link whose parents are not checked in yet,
+# and those dangling links are harmless: treating "unresolvable" as "outside the
+# project" would stop a run over an ordinary `ln -s generated/...` placeholder.
+lexical_join() {
+  local current=$1 rest=$2 part
+  while [ -n "$rest" ]; do
+    part=${rest%%/*}
+    case "$rest" in
+      */*) rest=${rest#*/} ;;
+      *) rest="" ;;
+    esac
+    case "$part" in
+      '' | .) ;;
+      ..)
+        current=${current%/*}
+        [ -n "$current" ] || current="/"
+        ;;
+      *) current="$current/$part" ;;
+    esac
+  done
+  printf '%s' "$current"
+}
+
+# True when a relative link stays inside the project. The physical path wins
+# whenever it resolves; a link that leaves and re-enters the project is still
+# inside and still ships.
+symlink_stays_inside() {
+  local link=$1 target=$2 dir resolved
+  dir=$(canonical_path "$(dirname "$link")") || return 1
+  if ! resolved=$(canonical_path "$dir/$target"); then
+    resolved=$(lexical_join "$dir" "$target")
+  fi
+  case "$resolved" in
+    "$project" | "$project"/*) return 0 ;;
+  esac
+  return 1
+}
+
 # A link is safe to ship only when it is relative and stays inside the project.
 # tar stores a link as a link instead of copying what it points at, so a link to
 # ~/.ssh carries no key bytes, but it does hand the recipient an absolute path
@@ -349,25 +402,14 @@ canonical_path() {
 # work on the recipient's machine and it still names this machine's layout, so
 # the archive stops instead of quietly changing what the project contains.
 check_symlinks() {
-  local link target resolved reason pattern prune=() offenders=()
-
-  # The archive already drops these paths, so a link inside them never reaches
-  # it: a stale link under build/ or .next/ must not stop the run. The patterns
-  # come from the exclusion list itself so the two cannot drift apart.
-  for pattern in "${excludes[@]}"; do
-    [ "${#prune[@]}" -eq 0 ] || prune+=(-o)
-    prune+=(-name "${pattern#--exclude=}")
-  done
+  local link target reason offenders=()
 
   while IFS= read -r -d '' link; do
     target=$(readlink "$link") || continue
     case "$target" in
       /*) reason="absolute target" ;;
       *)
-        resolved=$(canonical_path "$(dirname "$link")/$target") || resolved=""
-        case "$resolved" in
-          "$project" | "$project"/*) continue ;;
-        esac
+        symlink_stays_inside "$link" "$target" && continue
         reason="points outside the project"
         ;;
     esac
@@ -386,7 +428,45 @@ check_symlinks() {
   die "remove or re-target the symlink(s) above, then rerun"
 }
 
+# BSD and GNU stat disagree on the flag, so ask both and leave it empty if
+# neither answers.
+link_count() {
+  local count
+  count=$(stat -c '%h' "$1" 2>/dev/null || true)
+  [ -n "$count" ] || count=$(stat -f '%l' "$1" 2>/dev/null || true)
+  printf '%s' "$count"
+}
+
+# A hard link is not something tar can describe as a link: it is the same inode
+# as the file it was linked from, so tar copies the shared bytes into the archive
+# under whatever name the project gave it. Name-based exclusions cannot catch a
+# copy of ~/.ssh/id_rsa that arrives as src/app-state.json. Every file with more
+# than one link is refused, in-project links included: the other name may be
+# anywhere on this machine and the archive cannot show which.
+check_hardlinks() {
+  local file count offenders=()
+
+  while IFS= read -r -d '' file; do
+    count=$(link_count "$file")
+    [ -n "$count" ] || count="?"
+    offenders+=("${file#"$project"/} ($count hard links)")
+  done < <(
+    find "$project" \
+      \( "${prune[@]}" \) -prune -o \
+      -type f -links +1 -print0 2>/dev/null
+  )
+
+  if [ "${#offenders[@]}" -eq 0 ]; then
+    return 0
+  fi
+  printf '\nHard-linked files that cannot be archived safely:\n' >&2
+  printf '  %s\n' "${offenders[@]}" >&2
+  die "copy or delete the hard-linked file(s) above, then rerun"
+}
+
+build_prune
 check_symlinks
+check_hardlinks
 
 info "Creating archive: $archive"
 
@@ -420,5 +500,5 @@ printf '  Project: %s\n' "$project"
 printf '  Archive: %s\n' "$archive"
 printf '  Files:   %s\n' "$count"
 printf '  Size:    %s\n' "$size"
-printf '\nVerified: no node_modules, build output, .git, .env/secret files, or links outside the project.\n'
+printf '\nVerified: no node_modules, build output, .git, .env/secret files, escaping symlinks, or hard-linked files.\n'
 printf 'Attach the archive to the chat.\n'

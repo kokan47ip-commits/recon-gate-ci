@@ -240,12 +240,16 @@ test_explicit_project_override() {
   make_project "$other" "travel-app"
   printf 'other\n' >"$other/src/other.txt"
   ln -s src "$chosen/src-link"
+  # Dangling but clearly inside the project: nothing to resolve, still shippable.
+  ln -s generated/deep/thing.js "$chosen/src/dangling-link"
 
   run_helper "$home" --project "$chosen" --output "$archive" --port "$UNUSED_PORT"
   assert_status 0
   assert_output_contains "Using explicit project path: $chosen"
+  assert_output_lacks "dangling-link"
   assert_archive_has "$archive" '(^|/)src/chosen\.txt$'
   assert_archive_has "$archive" '(^|/)src-link$'
+  assert_archive_has "$archive" '(^|/)src/dangling-link$'
   assert_archive_has_no_escaping_links "$archive"
   assert_archive_lacks "$archive" '(^|/)src/other\.txt$'
   end_test
@@ -354,6 +358,38 @@ test_symlink_in_excluded_output_is_ignored() {
   end_test
 }
 
+test_hard_link_to_private_key_is_rejected() {
+  start_test "hard link to ~/.ssh/id_rsa is refused"
+  local home="$work/hardlink/home"
+  local project="$home/Projects/HajjUmrahApp"
+  local ssh_dir="$home/.ssh"
+  local archive="$work/hardlink.tar.gz"
+  local control="$work/hardlink-control.tar.gz"
+  local marker="PRIVATE KEY MATERIAL DO-NOT-SHIP"
+  make_project "$project" "hajj-umrah-app"
+
+  mkdir -p "$ssh_dir"
+  printf '%s\n' "$marker" >"$ssh_dir/id_rsa"
+  # A name no exclusion pattern matches: only the shared inode gives it away.
+  ln "$ssh_dir/id_rsa" "$project/src/app-state.json"
+
+  # Control: plain tar copies the shared bytes, so the leak is real and this test
+  # exercises it rather than an exclusion that happens to match a name.
+  if ! "$real_tar" -czf "$control" -C "$project" . 2>/dev/null; then
+    fail "control archive could not be created"
+  elif ! "$real_tar" -xOzf "$control" ./src/app-state.json 2>/dev/null | grep -qF "$marker"; then
+    fail "control archive did not carry the key material: the test is not exercising a leak"
+  fi
+
+  run_helper "$home" --project "$project" --output "$archive" --port "$UNUSED_PORT"
+  assert_status 1
+  assert_output_contains "Hard-linked files that cannot be archived safely"
+  assert_output_contains "src/app-state.json"
+  assert_output_lacks "Creating archive"
+  assert_file_absent "$archive"
+  end_test
+}
+
 test_existing_output_is_not_overwritten() {
   start_test "existing archive is not overwritten"
   local home="$work/existing/home"
@@ -391,6 +427,7 @@ test_no_project_found
 test_ssh_leak_is_rejected
 test_symlink_outside_project_is_not_archived
 test_symlink_in_excluded_output_is_ignored
+test_hard_link_to_private_key_is_rejected
 test_existing_output_is_not_overwritten
 test_explicit_non_project_is_rejected
 
