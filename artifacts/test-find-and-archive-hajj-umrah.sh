@@ -358,6 +358,31 @@ test_symlink_in_excluded_output_is_ignored() {
   end_test
 }
 
+test_symlink_through_excluded_output_is_rejected() {
+  start_test "symlink routed through excluded output aborts the archive"
+  local home="$work/pruned-hop/home"
+  local project="$home/Projects/HajjUmrahApp"
+  local ssh_dir="$home/.ssh"
+  local archive="$work/pruned-hop.tar.gz"
+  make_project "$project" "hajj-umrah-app"
+  mkdir -p "$project/build" "$ssh_dir"
+  printf 'PRIVATE KEY\n' >"$ssh_dir/id_rsa"
+
+  # The hop itself sits in build/, which both checks prune, so it is never
+  # scanned. Only resolving `exposed` physically reveals where it leads; a
+  # lexical read of the target says it is still inside the project.
+  ln -s "$ssh_dir" "$project/build/out"
+  ln -s build/out/id_rsa "$project/exposed"
+
+  run_helper "$home" --project "$project" --output "$archive" --port "$UNUSED_PORT"
+  assert_status 1
+  assert_output_contains "Symlinks that cannot be archived safely"
+  assert_output_contains "exposed -> build/out/id_rsa (points outside the project)"
+  assert_output_lacks "Creating archive"
+  assert_file_absent "$archive"
+  end_test
+}
+
 test_hard_link_to_private_key_is_rejected() {
   start_test "hard link to ~/.ssh/id_rsa is refused"
   local home="$work/hardlink/home"
@@ -387,6 +412,31 @@ test_hard_link_to_private_key_is_rejected() {
   assert_output_contains "src/app-state.json"
   assert_output_lacks "Creating archive"
   assert_file_absent "$archive"
+  end_test
+}
+
+test_hard_link_in_excluded_output_is_ignored() {
+  start_test "hard link inside excluded build output does not abort"
+  local home="$work/pruned-hardlink/home"
+  local project="$home/Projects/HajjUmrahApp"
+  local archive="$work/pruned-hardlink.tar.gz"
+  make_project "$project" "hajj-umrah-app"
+  mkdir -p "$project/build" "$project/dist" "$home/.ssh"
+  printf 'keep\n' >"$project/src/kept.txt"
+  printf '%s\n' "PRIVATE KEY MATERIAL DO-NOT-SHIP" >"$home/.ssh/id_rsa"
+
+  # Excluded output never reaches the archive, so a stale copy left there must
+  # not block a run that tar itself would complete cleanly.
+  ln "$home/.ssh/id_rsa" "$project/build/app-state.json"
+  ln "$home/.ssh/id_rsa" "$project/dist/app-state.json"
+
+  run_helper "$home" --project "$project" --output "$archive" --port "$UNUSED_PORT"
+  assert_status 0
+  assert_output_contains "Creating archive"
+  assert_output_lacks "Hard-linked files that cannot be archived safely"
+  assert_output_lacks "app-state.json"
+  assert_archive_has "$archive" '(^|/)src/kept\.txt$'
+  assert_archive_lacks "$archive" '(^|/)(build|dist)(/|$)'
   end_test
 }
 
@@ -427,7 +477,9 @@ test_no_project_found
 test_ssh_leak_is_rejected
 test_symlink_outside_project_is_not_archived
 test_symlink_in_excluded_output_is_ignored
+test_symlink_through_excluded_output_is_rejected
 test_hard_link_to_private_key_is_rejected
+test_hard_link_in_excluded_output_is_ignored
 test_existing_output_is_not_overwritten
 test_explicit_non_project_is_rejected
 
