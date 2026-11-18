@@ -111,7 +111,10 @@ jobs:
           PG_BINDIR="$PG_BINDIR" PSQL="$PSQL" bash tests/recon-gate-postgres.test.sh
 
   archive-helper-bsdtar:
-    runs-on: macos-latest
+    # Pinned image: macos-latest currently resolves to macOS 26 arm64, but a
+    # floating label would silently move the bsdtar/libarchive coverage to a new
+    # OS image. Bump this deliberately, as with ubuntu-24.04 above.
+    runs-on: macos-26
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

@@ -22,4 +22,4 @@ The PostgreSQL suite creates a temporary cluster and databases, exercises the pa
 
 ## CI
 
-The `recon-gate` workflow runs the installer, PostgreSQL, and archive-helper suites on Ubuntu 24.04 with PostgreSQL 16 and Node 22. A separate `archive-helper-bsdtar` job reruns the archive-helper suite on macOS, with BSD `libarchive` tar instead of GNU tar.
+The `recon-gate` workflow runs the installer, PostgreSQL, and archive-helper suites on Ubuntu 24.04 with PostgreSQL 16 and Node 22. A separate `archive-helper-bsdtar` job reruns the archive-helper suite on the pinned `macos-26` runner image, with BSD `libarchive` tar instead of GNU tar.
