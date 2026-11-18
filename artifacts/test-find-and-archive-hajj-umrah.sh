@@ -83,6 +83,12 @@ assert_output_contains() {
   esac
 }
 
+assert_output_lacks() {
+  case "$output" in
+    *"$1"*) fail "output should not contain: $1" ;;
+  esac
+}
+
 assert_file_exists() {
   if [ ! -f "$1" ]; then
     fail "expected file is missing: $1"
@@ -233,11 +239,14 @@ test_explicit_project_override() {
   printf 'chosen\n' >"$chosen/src/chosen.txt"
   make_project "$other" "travel-app"
   printf 'other\n' >"$other/src/other.txt"
+  ln -s src "$chosen/src-link"
 
   run_helper "$home" --project "$chosen" --output "$archive" --port "$UNUSED_PORT"
   assert_status 0
   assert_output_contains "Using explicit project path: $chosen"
   assert_archive_has "$archive" '(^|/)src/chosen\.txt$'
+  assert_archive_has "$archive" '(^|/)src-link$'
+  assert_archive_has_no_escaping_links "$archive"
   assert_archive_lacks "$archive" '(^|/)src/other\.txt$'
   end_test
 }
@@ -288,13 +297,12 @@ EOF
 }
 
 test_symlink_outside_project_is_not_archived() {
-  start_test "symlink pointing at ~/.ssh is not archived"
+  start_test "symlink pointing at ~/.ssh aborts the archive"
   local home="$work/symlink/home"
   local project="$home/Projects/HajjUmrahApp"
   local ssh_dir="$home/.ssh"
   local archive="$work/symlink.tar.gz"
   make_project "$project" "hajj-umrah-app"
-  printf 'keep\n' >"$project/keep.txt"
 
   mkdir -p "$ssh_dir/nested"
   printf 'Host *\n' >"$ssh_dir/config"
@@ -304,18 +312,20 @@ test_symlink_outside_project_is_not_archived() {
 
   ln -s "$ssh_dir" "$project/ssh-link"
   ln -s "$ssh_dir/id_rsa" "$project/key-link"
-  ln -s src "$project/src-link"
+  ln -s ../../.ssh "$project/escape-link"
+  ln -s "$project/src" "$project/abs-link"
+  ln -s src "$project/ok-link"
 
   run_helper "$home" --project "$project" --output "$archive" --port "$UNUSED_PORT"
-  assert_status 0
-  assert_output_contains "Dropping symlink(s) that point outside the project"
-  assert_output_contains "ssh-link"
-  assert_archive_has "$archive" '(^|/)package\.json$'
-  assert_archive_has "$archive" '(^|/)keep\.txt$'
-  assert_archive_has "$archive" '(^|/)src-link$'
-  assert_archive_lacks "$archive" '(^|/)(ssh-link|key-link)(/|$)'
-  assert_archive_lacks "$archive" '(^|/)(config|id_rsa|authorized_keys|deep\.txt)$'
-  assert_archive_has_no_escaping_links "$archive"
+  assert_status 1
+  assert_output_contains "Symlinks that cannot be archived safely"
+  assert_output_contains "ssh-link -> $ssh_dir (absolute target)"
+  assert_output_contains "key-link -> $ssh_dir/id_rsa (absolute target)"
+  assert_output_contains "escape-link -> ../../.ssh (points outside the project)"
+  assert_output_contains "abs-link -> $project/src (absolute target)"
+  assert_output_contains "remove or re-target the symlink(s) above"
+  assert_output_lacks "ok-link"
+  assert_file_absent "$archive"
   end_test
 }
 

@@ -19,9 +19,7 @@ OUTPUT=""
 RUNNING_PROJECT=""
 candidates=()
 excludes=()
-external_links=()
 listing=""
-links_listing=""
 archive=""
 
 usage() {
@@ -36,6 +34,7 @@ Options:
   -h, --help       Show this help.
 
 The archive excludes dependencies, build output, .git, and common secret files.
+Every symlink in the project must be relative and stay inside the project.
 EOF
 }
 
@@ -51,9 +50,6 @@ info() {
 cleanup() {
   if [ -n "$listing" ]; then
     rm -f "$listing"
-  fi
-  if [ -n "$links_listing" ]; then
-    rm -f "$links_listing"
   fi
 }
 trap cleanup EXIT
@@ -346,85 +342,43 @@ canonical_path() {
   printf '%s/%s' "$resolved" "$(basename "$path")"
 }
 
-link_target_path() {
-  local link=$1 target
-  target=$(readlink "$link") || return 1
-  case "$target" in
-    /*) printf '%s' "$target" ;;
-    *) printf '%s/%s' "$(dirname "$link")" "$target" ;;
-  esac
-}
-
-# The deny rules above match member paths, so a link inside the project is
-# invisible to them. tar archives a link as a link instead of copying what it
-# points at, so `ssh-link -> ~/.ssh` does not pull in key bytes, but it does hand
-# the recipient an absolute path into the sender's home, and an extractor running
-# with dereferencing would recreate the target. A link that resolves outside the
-# project is therefore dropped; the two checks below share that one test, with the
-# post-archive pass catching a link that got past the exclusion.
-is_inside_project() {
-  local resolved
-  resolved=$(canonical_path "$1") || return 1
-  case "$resolved" in
-    "$project" | "$project"/*) return 0 ;;
-  esac
-  return 1
-}
-
-collect_external_links() {
-  local link target rel
+# A link is safe to ship only when it is relative and stays inside the project.
+# tar stores a link as a link instead of copying what it points at, so a link to
+# ~/.ssh carries no key bytes, but it does hand the recipient an absolute path
+# into this machine and a live link to it for any extractor that dereferences.
+# An absolute target is refused even when it points inside the project: it cannot
+# work on the recipient's machine and it still names this machine's layout, so
+# the archive stops instead of quietly changing what the project contains.
+check_symlinks() {
+  local link target resolved reason offenders=()
   while IFS= read -r -d '' link; do
-    target=$(link_target_path "$link") || continue
-    is_inside_project "$target" && continue
-    rel=${link#"$project"/}
-    excludes+=("--exclude=./$rel")
-    external_links+=("$rel")
+    target=$(readlink "$link") || continue
+    case "$target" in
+      /*) reason="absolute target" ;;
+      *)
+        resolved=$(canonical_path "$(dirname "$link")/$target") || resolved=""
+        case "$resolved" in
+          "$project" | "$project"/*) continue ;;
+        esac
+        reason="points outside the project"
+        ;;
+    esac
+    offenders+=("${link#"$project"/} -> $target ($reason)")
   done < <(
     find "$project" \
       \( -name node_modules -o -name .git \) -prune -o \
       -type l -print0 2>/dev/null
   )
+
+  if [ "${#offenders[@]}" -eq 0 ]; then
+    return 0
+  fi
+  printf '\nSymlinks that cannot be archived safely:\n' >&2
+  printf '  %s\n' "${offenders[@]}" >&2
+  die "remove or re-target the symlink(s) above, then rerun"
 }
 
-reject_escaping_links() {
-  local line mode rest target rel
-
-  # Names are checked against the plain listing: rebuilding a member path from a
-  # long listing means splitting on spaces, and member paths may contain them.
-  for rel in ${external_links[@]+"${external_links[@]}"}; do
-    if grep -Fxq "./$rel" "$listing"; then
-      printf '\nLink that points outside the project was archived: ./%s\n' "$rel" >&2
-      abort_archive "archive contains a symlink that points outside the project"
-    fi
-  done
-
-  # A link with an absolute target is a leak whatever it is called, so check the
-  # target of every link entry too.
-  while IFS= read -r line; do
-    mode=${line%%[[:space:]]*}
-    case "$mode" in
-      l*) ;;
-      *) continue ;;
-    esac
-    rest=${line#*[[:space:]]}
-    case "$rest" in
-      *" -> "*) target=${rest##* -> } ;;
-      *) continue ;;
-    esac
-    case "$target" in
-      /*) ;;
-      *) continue ;;
-    esac
-    is_inside_project "$target" && continue
-    printf '\nLink escaping the project found:\n  %s\n' "$line" >&2
-    abort_archive "archive contains a symlink that points outside the project"
-  done <"$links_listing"
-}
-
-collect_external_links
-if [ "${#external_links[@]}" -gt 0 ]; then
-  info "Dropping symlink(s) that point outside the project: ${external_links[*]}"
-fi
+check_symlinks
 
 umask 077
 if ! tar -czf "$archive" "${excludes[@]}" -C "$project" .; then
@@ -446,12 +400,6 @@ reject_forbidden "dependency/build paths" "$forbidden_dirs" "archive contains ex
 
 forbidden_secrets='(^|/)(\.env($|/|\.)|\.envrc($|/)|\.ssh($|/)|\.npmrc$|\.pypirc$|id_rsa$|id_ed25519$)|\.(pem|key|p12|pfx)$'
 reject_forbidden "secret files" "$forbidden_secrets" "archive contains excluded secret files"
-
-links_listing=$(mktemp "${TMPDIR:-/tmp}/hajj-umrah-links.XXXXXX") || abort_archive "cannot create temporary file"
-if ! tar -tvzf "$archive" >"$links_listing"; then
-  abort_archive "created archive could not be read"
-fi
-reject_escaping_links
 
 count=$(wc -l <"$listing" | tr -d '[:space:]')
 size=$(du -h "$archive")
