@@ -117,6 +117,21 @@ assert_archive_lacks() {
   fi
 }
 
+assert_archive_has_no_escaping_links() {
+  local file=$1 targets target
+  if [ ! -f "$file" ]; then
+    fail "archive is missing: $file"
+    return 0
+  fi
+  targets=$("$real_tar" -tzvf "$file" | awk '$1 ~ /^l/ && / -> / { sub(/^.* -> /, ""); print }')
+  [ -n "$targets" ] || return 0
+  while IFS= read -r target; do
+    case "$target" in
+      /* | .. | ../* | */../* | */..) fail "archive links outside the project: $target" ;;
+    esac
+  done < <(printf '%s\n' "$targets")
+}
+
 make_project() {
   local dir=$1 name=$2
   mkdir -p "$dir/src"
@@ -272,6 +287,38 @@ EOF
   end_test
 }
 
+test_symlink_outside_project_is_not_archived() {
+  start_test "symlink pointing at ~/.ssh is not archived"
+  local home="$work/symlink/home"
+  local project="$home/Projects/HajjUmrahApp"
+  local ssh_dir="$home/.ssh"
+  local archive="$work/symlink.tar.gz"
+  make_project "$project" "hajj-umrah-app"
+  printf 'keep\n' >"$project/keep.txt"
+
+  mkdir -p "$ssh_dir/nested"
+  printf 'Host *\n' >"$ssh_dir/config"
+  printf 'PRIVATE KEY\n' >"$ssh_dir/id_rsa"
+  printf 'ssh-rsa AAAA\n' >"$ssh_dir/authorized_keys"
+  printf 'deep secret\n' >"$ssh_dir/nested/deep.txt"
+
+  ln -s "$ssh_dir" "$project/ssh-link"
+  ln -s "$ssh_dir/id_rsa" "$project/key-link"
+  ln -s src "$project/src-link"
+
+  run_helper "$home" --project "$project" --output "$archive" --port "$UNUSED_PORT"
+  assert_status 0
+  assert_output_contains "Dropping symlink(s) that point outside the project"
+  assert_output_contains "ssh-link"
+  assert_archive_has "$archive" '(^|/)package\.json$'
+  assert_archive_has "$archive" '(^|/)keep\.txt$'
+  assert_archive_has "$archive" '(^|/)src-link$'
+  assert_archive_lacks "$archive" '(^|/)(ssh-link|key-link)(/|$)'
+  assert_archive_lacks "$archive" '(^|/)(config|id_rsa|authorized_keys|deep\.txt)$'
+  assert_archive_has_no_escaping_links "$archive"
+  end_test
+}
+
 test_existing_output_is_not_overwritten() {
   start_test "existing archive is not overwritten"
   local home="$work/existing/home"
@@ -307,6 +354,7 @@ test_home_search_ambiguity
 test_explicit_project_override
 test_no_project_found
 test_ssh_leak_is_rejected
+test_symlink_outside_project_is_not_archived
 test_existing_output_is_not_overwritten
 test_explicit_non_project_is_rejected
 
