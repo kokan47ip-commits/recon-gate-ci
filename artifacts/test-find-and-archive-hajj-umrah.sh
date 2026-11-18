@@ -325,7 +325,32 @@ test_symlink_outside_project_is_not_archived() {
   assert_output_contains "abs-link -> $project/src (absolute target)"
   assert_output_contains "remove or re-target the symlink(s) above"
   assert_output_lacks "ok-link"
+  assert_output_lacks "Creating archive"
   assert_file_absent "$archive"
+  end_test
+}
+
+test_symlink_in_excluded_output_is_ignored() {
+  start_test "symlink inside excluded build output does not abort"
+  local home="$work/excluded-links/home"
+  local project="$home/Projects/HajjUmrahApp"
+  local archive="$work/excluded-links.tar.gz"
+  make_project "$project" "hajj-umrah-app"
+  mkdir -p "$project/build" "$project/dist" "$project/.next" "$home/.ssh"
+  printf 'keep\n' >"$project/src/kept.txt"
+  printf 'PRIVATE KEY\n' >"$home/.ssh/id_rsa"
+
+  ln -s "$home/.ssh" "$project/build/ssh-link"
+  ln -s "$home/.ssh/id_rsa" "$project/dist/key-link"
+  ln -s ../.. "$project/.next/root-link"
+
+  run_helper "$home" --project "$project" --output "$archive" --port "$UNUSED_PORT"
+  assert_status 0
+  assert_output_contains "Creating archive"
+  assert_output_lacks "Symlinks that cannot be archived safely"
+  assert_output_lacks "ssh-link"
+  assert_archive_has "$archive" '(^|/)src/kept\.txt$'
+  assert_archive_lacks "$archive" '(^|/)(build|dist|\.next)(/|$)'
   end_test
 }
 
@@ -365,6 +390,7 @@ test_explicit_project_override
 test_no_project_found
 test_ssh_leak_is_rejected
 test_symlink_outside_project_is_not_archived
+test_symlink_in_excluded_output_is_ignored
 test_existing_output_is_not_overwritten
 test_explicit_non_project_is_rejected
 

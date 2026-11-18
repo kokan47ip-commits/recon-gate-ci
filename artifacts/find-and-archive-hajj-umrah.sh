@@ -295,7 +295,6 @@ if [ -e "$archive" ]; then
 fi
 
 info "Detected project: $project"
-info "Creating archive: $archive"
 
 excludes+=(
   "--exclude=.git"
@@ -350,7 +349,16 @@ canonical_path() {
 # work on the recipient's machine and it still names this machine's layout, so
 # the archive stops instead of quietly changing what the project contains.
 check_symlinks() {
-  local link target resolved reason offenders=()
+  local link target resolved reason pattern prune=() offenders=()
+
+  # The archive already drops these paths, so a link inside them never reaches
+  # it: a stale link under build/ or .next/ must not stop the run. The patterns
+  # come from the exclusion list itself so the two cannot drift apart.
+  for pattern in "${excludes[@]}"; do
+    [ "${#prune[@]}" -eq 0 ] || prune+=(-o)
+    prune+=(-name "${pattern#--exclude=}")
+  done
+
   while IFS= read -r -d '' link; do
     target=$(readlink "$link") || continue
     case "$target" in
@@ -366,7 +374,7 @@ check_symlinks() {
     offenders+=("${link#"$project"/} -> $target ($reason)")
   done < <(
     find "$project" \
-      \( -name node_modules -o -name .git \) -prune -o \
+      \( "${prune[@]}" \) -prune -o \
       -type l -print0 2>/dev/null
   )
 
@@ -379,6 +387,8 @@ check_symlinks() {
 }
 
 check_symlinks
+
+info "Creating archive: $archive"
 
 umask 077
 if ! tar -czf "$archive" "${excludes[@]}" -C "$project" .; then
