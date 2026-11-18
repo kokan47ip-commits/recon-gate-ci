@@ -75,10 +75,13 @@ jobs:
           shfmt --version
 
       - name: Run ShellCheck
-        run: shellcheck .github/scripts/*.sh tests/*.sh recon-gate-bootstrap.sh
+        run: shellcheck .github/scripts/*.sh tests/*.sh artifacts/*.sh recon-gate-bootstrap.sh
 
       - name: Check workflow/installer shell formatting
-        run: shfmt -d -i 2 -ci .github/scripts/*.sh recon-gate-bootstrap.sh
+        run: shfmt -d -i 2 -ci .github/scripts/*.sh artifacts/*.sh recon-gate-bootstrap.sh
+
+      - name: Archive helper tests
+        run: bash artifacts/test-find-and-archive-hajj-umrah.sh
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
