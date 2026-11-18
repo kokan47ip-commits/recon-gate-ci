@@ -24,7 +24,9 @@ bash_bin=$(command -v bash) || {
 
 ORIGINAL_PATH=${PATH:-}
 UNUSED_PORT=39876
-work=$(mktemp -d "${TMPDIR:-/tmp}/hajj-umrah-tests.XXXXXX")
+# Resolve to a physical path: macOS TMPDIR lives under /var, a symlink to
+# /private/var, and the helper reports projects with `pwd -P`.
+work=$(cd "$(mktemp -d "${TMPDIR:-/tmp}/hajj-umrah-tests.XXXXXX")" && pwd -P)
 trap 'rm -rf "$work"' EXIT
 
 total=0
