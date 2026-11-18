@@ -428,15 +428,6 @@ check_symlinks() {
   die "remove or re-target the symlink(s) above, then rerun"
 }
 
-# BSD and GNU stat disagree on the flag, so ask both and leave it empty if
-# neither answers.
-link_count() {
-  local count
-  count=$(stat -c '%h' "$1" 2>/dev/null || true)
-  [ -n "$count" ] || count=$(stat -f '%l' "$1" 2>/dev/null || true)
-  printf '%s' "$count"
-}
-
 # A hard link is not something tar can describe as a link: it is the same inode
 # as the file it was linked from, so tar copies the shared bytes into the archive
 # under whatever name the project gave it. Name-based exclusions cannot catch a
@@ -444,12 +435,10 @@ link_count() {
 # than one link is refused, in-project links included: the other name may be
 # anywhere on this machine and the archive cannot show which.
 check_hardlinks() {
-  local file count offenders=()
+  local file offenders=()
 
   while IFS= read -r -d '' file; do
-    count=$(link_count "$file")
-    [ -n "$count" ] || count="?"
-    offenders+=("${file#"$project"/} ($count hard links)")
+    offenders+=("${file#"$project"/}")
   done < <(
     find "$project" \
       \( "${prune[@]}" \) -prune -o \
