@@ -83,6 +83,9 @@ jobs:
       - name: Archive helper tests
         run: bash artifacts/test-find-and-archive-hajj-umrah.sh
 
+      - name: Archive inspector tests
+        run: bash artifacts/test-inspect-archive.sh
+
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '22'
@@ -127,3 +130,6 @@ jobs:
 
       - name: Archive helper tests (bsdtar)
         run: bash artifacts/test-find-and-archive-hajj-umrah.sh
+
+      - name: Archive inspector tests (bsdtar)
+        run: bash artifacts/test-inspect-archive.sh
