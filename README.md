@@ -23,3 +23,12 @@ The PostgreSQL suite creates a temporary cluster and databases, exercises the pa
 ## CI
 
 The `recon-gate` workflow runs the installer, PostgreSQL, and archive-helper suites on Ubuntu 24.04 with PostgreSQL 16 and Node 22. A separate `archive-helper-bsdtar` job reruns the archive-helper suite on the pinned `macos-26` runner image, with BSD `libarchive` tar instead of GNU tar.
+
+## Archive helper safety policy
+
+`artifacts/find-and-archive-hajj-umrah.sh` refuses to build an archive rather than quietly changing what the project contains:
+
+- **Symlinks** must be relative and stay inside the project. Absolute targets are refused even when they point inside the project, because such a link cannot work on the recipient's machine and still spells out this machine's layout. A dangling relative link is kept, since tar stores a link as a link.
+- **Hard links** are refused for every file with more than one link, in-project links included: tar copies the shared bytes under whatever name the project gave it, so a copy of `~/.ssh/id_rsa` arriving as `src/app-state.json` is invisible to any name-based exclusion.
+
+Files inside excluded output (`build/`, `dist/`, `.next/`, `coverage/`, and the rest) are exempt from both checks, because they never reach the archive. Both checks prune the same exclusion list the archive uses, so the checks and tar cannot drift apart.
