@@ -75,10 +75,13 @@ jobs:
           shfmt --version
 
       - name: Run ShellCheck
-        run: shellcheck .github/scripts/*.sh tests/*.sh recon-gate-bootstrap.sh
+        run: shellcheck .github/scripts/*.sh tests/*.sh artifacts/*.sh recon-gate-bootstrap.sh
 
       - name: Check workflow/installer shell formatting
-        run: shfmt -d -i 2 -ci .github/scripts/*.sh recon-gate-bootstrap.sh
+        run: shfmt -d -i 2 -ci .github/scripts/*.sh artifacts/*.sh recon-gate-bootstrap.sh
+
+      - name: Archive helper tests
+        run: bash artifacts/test-find-and-archive-hajj-umrah.sh
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -106,3 +109,21 @@ jobs:
           "$PSQL" --version
           "$PG_BINDIR/postgres" --version
           PG_BINDIR="$PG_BINDIR" PSQL="$PSQL" bash tests/recon-gate-postgres.test.sh
+
+  archive-helper-bsdtar:
+    # Pinned image: macos-latest currently resolves to macOS 26 arm64, but a
+    # floating label would silently move the bsdtar/libarchive coverage to a new
+    # OS image. Bump this deliberately, as with ubuntu-24.04 above.
+    runs-on: macos-26
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Assert the system tar is bsdtar
+        run: |
+          set -euo pipefail
+          tar --version
+          tar --version | grep -q bsdtar
+
+      - name: Archive helper tests (bsdtar)
+        run: bash artifacts/test-find-and-archive-hajj-umrah.sh
