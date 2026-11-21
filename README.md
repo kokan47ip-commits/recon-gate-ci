@@ -32,3 +32,22 @@ The `recon-gate` workflow runs the installer, PostgreSQL, and archive-helper sui
 - **Hard links** are refused for every file with more than one link, in-project links included: tar copies the shared bytes under whatever name the project gave it, so a copy of `~/.ssh/id_rsa` arriving as `src/app-state.json` is invisible to any name-based exclusion.
 
 Files inside excluded output (`build/`, `dist/`, `.next/`, `coverage/`, and the rest) are exempt from both checks, because they never reach the archive. Both checks prune the same exclusion list the archive uses, so the checks and tar cannot drift apart.
+
+## Archive inspector
+
+`artifacts/inspect-archive.sh` is the receiving-side counterpart: it lists what an archive contains and flags what should not be in one, so a review runs the same way every time.
+
+- **Names** that should never ship: `.env*`, `.ssh`, `.npmrc`, `.aws`, private keys (`id_*`, `*.pem`, `*.key`, `*.p12`/`*.pfx`, `*.p8`, keystores, provisioning profiles), credential-shaped names (`config.json`, `*secret*`, `service-account*.json`), data dumps (`*.sqlite`, `*.db`, `*.sql`, `*.dump`, `*.bak`, `*.log`), nested archives, and `node_modules/`, `build/`, `dist/`, `.next/`, `coverage/`.
+- **Hard-link entries**, because tar copies the shared bytes under whatever name the project used.
+- **Symlinks** whose target is absolute or leaves the archive; an ordinary relative link inside the project is listed but not flagged.
+- **Unsafe member paths**: absolute names and `..` components. Such an archive is not extracted.
+- **Contents** in the default mode only: private-key headers, AWS/GitHub/Slack/Stripe/Google key shapes, JWTs, database URLs with embedded credentials, and noisier `password = "…"` assignments. Files over 10 MB are skipped and the report says so.
+
+`--preview` prints the names, the name flags and the link entries and stops before reading file contents. Run it before uploading an archive; the receiving side runs the same script without `--preview`, so the preview and the review cannot drift apart.
+
+```bash
+bash artifacts/inspect-archive.sh archive.tar.gz            # full review
+bash artifacts/inspect-archive.sh --preview archive.tar.gz  # before sending
+```
+
+Exit status: `0` nothing flagged, `1` something flagged (read the report), `2` usage error or an unreadable archive.
